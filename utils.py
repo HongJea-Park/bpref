@@ -6,8 +6,6 @@ import os
 import random
 import math
 import dmc2gym
-import metaworld
-import metaworld.envs.mujoco.env_dict as _env_dict
 
 from collections import deque
 from gym.wrappers.time_limit import TimeLimit
@@ -61,34 +59,11 @@ def tie_weights(src, trg):
     trg.bias = src.bias
     
 def make_metaworld_env(cfg):
-    env_name = cfg.env.replace('metaworld_','')
-    if env_name in _env_dict.ALL_V2_ENVIRONMENTS:
-        env_cls = _env_dict.ALL_V2_ENVIRONMENTS[env_name]
-    else:
-        env_cls = _env_dict.ALL_V1_ENVIRONMENTS[env_name]
-    
-    env = env_cls()
-    
-    env._freeze_rand_vec = False
-    env._set_task_called = True
-    env.seed(cfg.seed)
-    
-    return TimeLimit(NormalizedBoxEnv(env), env.max_path_length)
+    raise NotImplementedError
 
 def ppo_make_metaworld_env(env_id, seed):
-    env_name = env_id.replace('metaworld_','')
-    if env_name in _env_dict.ALL_V2_ENVIRONMENTS:
-        env_cls = _env_dict.ALL_V2_ENVIRONMENTS[env_name]
-    else:
-        env_cls = _env_dict.ALL_V1_ENVIRONMENTS[env_name]
-    
-    env = env_cls()
-    
-    env._freeze_rand_vec = False
-    env._set_task_called = True
-    env.seed(seed)
-    
-    return TimeLimit(env, env.max_path_length)
+    raise NotImplementedError
+
 
 class eval_mode(object):
     def __init__(self, *models):

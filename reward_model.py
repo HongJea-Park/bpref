@@ -10,10 +10,51 @@ import copy
 import scipy.stats as st
 import os
 import time
+import gym
+import matplotlib.animation as animation
+import matplotlib.pyplot as plt
 
 from scipy.stats import norm
 
-device = 'cuda'
+device = 'cpu'
+count = 0
+
+
+def save_gif(segment, label, reward):
+    global count
+    env = gym.make("Pendulum-v1")
+    env.reset()
+    fig = plt.figure(figsize=(6, 4), dpi=60)
+    ax = fig.add_subplot(111)
+    ax.axis("off")
+    frame = ax.imshow(np.zeros(shape=(10, 10, 1)), animated=True)
+    image_list = []
+    for obs_action in segment:
+        obs, action, _ = np.split(obs_action, [3, 4])
+        if obs[1] > 0:
+            theta = np.arccos(obs[0])
+        else:
+            theta = -np.arccos(obs[0])
+        thetadot = obs[-1]
+        action = np.clip(action, -env.max_torque, env.max_torque)[0]
+        env.state = np.array([theta, thetadot], dtype="float64")
+        env.last_u = action  # for rendering
+        # env.step(action)
+        if env.viewer is None:
+            rgb_array = env.render(mode="rgb_array")
+        else:
+            env.viewer.add_onetime(env.img)
+            env.pole_transform.set_rotation(env.state[0] + np.pi / 2)
+            if env.last_u is not None:
+                env.imgtrans.scale = (-env.last_u / 2, np.abs(env.last_u) / 2)
+            rgb_array = env.viewer.render(return_rgb_array=True)
+        frame = ax.imshow(rgb_array, animated=True)
+        image_list.append([frame])
+    env.close()
+    ani = animation.ArtistAnimation(fig, image_list, interval=50, blit=True, repeat_delay=0)
+    ani.save(f'/Users/hongjea/workspace/BPref/results/step{count}_label{label}_reward{reward}.mp4', writer="ffmpeg", fps=60)
+    plt.close()
+
 
 def gen_net(in_size=1, out_size=1, H=128, n_layers=3, activation='tanh'):
     net = []
@@ -255,15 +296,17 @@ class RewardModel:
         r_hats = np.array(r_hats)
         return np.mean(r_hats)
     
-    def r_hat_batch(self, x):
+    def r_hat_batch(self, x, rune=False):
         # they say they average the rewards from each member of the ensemble, but I think this only makes sense if the rewards are already normalized
         # but I don't understand how the normalization should be happening right now :(
         r_hats = []
         for member in range(self.de):
             r_hats.append(self.r_hat_member(x, member=member).detach().cpu().numpy())
         r_hats = np.array(r_hats)
-
-        return np.mean(r_hats, axis=0)
+        if rune:
+            return np.mean(r_hats, axis=0) + 0.05 * np.std(r_hats, axis=0)
+        else:
+            return np.mean(r_hats, axis=0)
     
     def save(self, model_dir, step):
         for member in range(self.de):
@@ -370,57 +413,84 @@ class RewardModel:
             self.buffer_index = next_index
             
     def get_label(self, sa_t_1, sa_t_2, r_t_1, r_t_2):
-        sum_r_t_1 = np.sum(r_t_1, axis=1)
-        sum_r_t_2 = np.sum(r_t_2, axis=1)
+        global count
+        labels = []
+        for batch_idx in range(sa_t_1.shape[0]):
+            segment1 = sa_t_1[batch_idx]
+            segment2 = sa_t_2[batch_idx]
+            if r_t_1[batch_idx].sum() > -600 and r_t_2[batch_idx].sum() > -600:
+                print(r_t_1[batch_idx].sum(), r_t_2[batch_idx].sum())
+                save_gif(segment1, label=1, reward=r_t_1[batch_idx].sum())
+                save_gif(segment2, label=2, reward=r_t_2[batch_idx].sum())
+                done = False
+                while not done:
+                    try:
+                        label = int(input("0: equally preferable / 1: first one is preferable / 2: last one is preferable - ")) - 1
+                        if label not in [-1, 0, 1]:
+                            continue
+                        done = True
+                    except:
+                        print("Re try!")
+            else:
+                equal = abs(r_t_1[batch_idx].sum() - r_t_2[batch_idx].sum()) < self.teacher_thres_equal
+                if equal:
+                    label = -1
+                else:
+                    label = int(r_t_1[batch_idx].sum() < r_t_2[batch_idx].sum())
+            labels.append(label)
+            count += 1
+        labels = np.array(labels).reshape(-1, 1)
+        # sum_r_t_1 = np.sum(r_t_1, axis=1)
+        # sum_r_t_2 = np.sum(r_t_2, axis=1)
         
-        # skip the query
-        if self.teacher_thres_skip > 0: 
-            max_r_t = np.maximum(sum_r_t_1, sum_r_t_2)
-            max_index = (max_r_t > self.teacher_thres_skip).reshape(-1)
-            if sum(max_index) == 0:
-                return None, None, None, None, []
+        # # skip the query
+        # if self.teacher_thres_skip > 0: 
+        #     max_r_t = np.maximum(sum_r_t_1, sum_r_t_2)
+        #     max_index = (max_r_t > self.teacher_thres_skip).reshape(-1)
+        #     if sum(max_index) == 0:
+        #         return None, None, None, None, []
 
-            sa_t_1 = sa_t_1[max_index]
-            sa_t_2 = sa_t_2[max_index]
-            r_t_1 = r_t_1[max_index]
-            r_t_2 = r_t_2[max_index]
-            sum_r_t_1 = np.sum(r_t_1, axis=1)
-            sum_r_t_2 = np.sum(r_t_2, axis=1)
+        #     sa_t_1 = sa_t_1[max_index]
+        #     sa_t_2 = sa_t_2[max_index]
+        #     r_t_1 = r_t_1[max_index]
+        #     r_t_2 = r_t_2[max_index]
+        #     sum_r_t_1 = np.sum(r_t_1, axis=1)
+        #     sum_r_t_2 = np.sum(r_t_2, axis=1)
         
-        # equally preferable
-        margin_index = (np.abs(sum_r_t_1 - sum_r_t_2) < self.teacher_thres_equal).reshape(-1)
+        # # equally preferable
+        # margin_index = (np.abs(sum_r_t_1 - sum_r_t_2) < self.teacher_thres_equal).reshape(-1)
         
-        # perfectly rational
-        seg_size = r_t_1.shape[1]
-        temp_r_t_1 = r_t_1.copy()
-        temp_r_t_2 = r_t_2.copy()
-        for index in range(seg_size-1):
-            temp_r_t_1[:,:index+1] *= self.teacher_gamma
-            temp_r_t_2[:,:index+1] *= self.teacher_gamma
-        sum_r_t_1 = np.sum(temp_r_t_1, axis=1)
-        sum_r_t_2 = np.sum(temp_r_t_2, axis=1)
+        # # perfectly rational
+        # seg_size = r_t_1.shape[1]
+        # temp_r_t_1 = r_t_1.copy()
+        # temp_r_t_2 = r_t_2.copy()
+        # for index in range(seg_size-1):
+        #     temp_r_t_1[:,:index+1] *= self.teacher_gamma
+        #     temp_r_t_2[:,:index+1] *= self.teacher_gamma
+        # sum_r_t_1 = np.sum(temp_r_t_1, axis=1)
+        # sum_r_t_2 = np.sum(temp_r_t_2, axis=1)
             
-        rational_labels = 1*(sum_r_t_1 < sum_r_t_2)
-        if self.teacher_beta > 0: # Bradley-Terry rational model
-            r_hat = torch.cat([torch.Tensor(sum_r_t_1), 
-                               torch.Tensor(sum_r_t_2)], axis=-1)
-            r_hat = r_hat*self.teacher_beta
-            ent = F.softmax(r_hat, dim=-1)[:, 1]
-            labels = torch.bernoulli(ent).int().numpy().reshape(-1, 1)
-        else:
-            labels = rational_labels
+        # rational_labels = 1*(sum_r_t_1 < sum_r_t_2)
+        # if self.teacher_beta > 0: # Bradley-Terry rational model
+        #     r_hat = torch.cat([torch.Tensor(sum_r_t_1), 
+        #                        torch.Tensor(sum_r_t_2)], axis=-1)
+        #     r_hat = r_hat*self.teacher_beta
+        #     ent = F.softmax(r_hat, dim=-1)[:, 1]
+        #     labels = torch.bernoulli(ent).int().numpy().reshape(-1, 1)
+        # else:
+        #     labels = rational_labels
         
-        # making a mistake
-        len_labels = labels.shape[0]
-        rand_num = np.random.rand(len_labels)
-        noise_index = rand_num <= self.teacher_eps_mistake
-        labels[noise_index] = 1 - labels[noise_index]
+        # # making a mistake
+        # len_labels = labels.shape[0]
+        # rand_num = np.random.rand(len_labels)
+        # noise_index = rand_num <= self.teacher_eps_mistake
+        # labels[noise_index] = 1 - labels[noise_index]
  
-        # equally preferable
-        labels[margin_index] = -1 
+        # # equally preferable
+        # labels[margin_index] = -1
         
         return sa_t_1, sa_t_2, r_t_1, r_t_2, labels
-    
+
     def kcenter_sampling(self):
         
         # get queries
@@ -534,8 +604,7 @@ class RewardModel:
         r_t_2, sa_t_2 = r_t_2[selected_index], sa_t_2[selected_index]
 
         # get labels
-        sa_t_1, sa_t_2, r_t_1, r_t_2, labels = self.get_label(
-            sa_t_1, sa_t_2, r_t_1, r_t_2)
+        sa_t_1, sa_t_2, r_t_1, r_t_2, labels = self.get_label(sa_t_1, sa_t_2, r_t_1, r_t_2)
         
         if len(labels) > 0:
             self.put_queries(sa_t_1, sa_t_2, labels)

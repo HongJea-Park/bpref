@@ -11,6 +11,7 @@ import time
 import pickle as pkl
 import utils
 import hydra
+import gym
 
 from logger import Logger
 from replay_buffer import ReplayBuffer
@@ -35,6 +36,8 @@ class Workspace(object):
         if 'metaworld' in cfg.env:
             self.env = utils.make_metaworld_env(cfg)
             self.log_success = True
+        elif "gym-Pendulum" in cfg.env:
+            self.env = gym.make("Pendulum-v1")
         else:
             self.env = utils.make_env(cfg)
 
@@ -157,9 +160,8 @@ class Workspace(object):
             elif self.step > self.cfg.num_seed_steps:
                 self.agent.update_state_ent(self.replay_buffer, self.logger, self.step, 
                                             gradient_update=1, K=self.cfg.topK)
-            
-            
-            next_obs, reward, done, extra = self.env.step(action)      
+
+            next_obs, reward, done, extra = self.env.step(action)
             # allow infinite bootstrap
             done = float(done)
             done_no_max = 0 if episode_step + 1 == self.env._max_episode_steps else done
@@ -178,7 +180,7 @@ class Workspace(object):
             self.step += 1
 
         self.agent.save(self.work_dir, self.step)
-        
+
 @hydra.main(config_path='config/train.yaml', strict=True)
 def main(cfg):
     workspace = Workspace(cfg)

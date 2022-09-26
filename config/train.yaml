@@ -6,7 +6,7 @@ env: dog_stand
 
 # Basic setup
 experiment: sac
-device: cuda
+device: cpu
 seed: 1
 
 # training 

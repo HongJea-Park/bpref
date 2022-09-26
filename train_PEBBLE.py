@@ -15,9 +15,11 @@ from logger import Logger
 from replay_buffer import ReplayBuffer
 from reward_model import RewardModel
 from collections import deque
+import gym
 
 import utils
 import hydra
+
 
 class Workspace(object):
     def __init__(self, cfg):
@@ -34,14 +36,16 @@ class Workspace(object):
         utils.set_seed_everywhere(cfg.seed)
         self.device = torch.device(cfg.device)
         self.log_success = False
-        
+
         # make env
         if 'metaworld' in cfg.env:
             self.env = utils.make_metaworld_env(cfg)
             self.log_success = True
+        elif "gym-Pendulum" in cfg.env:
+            self.env = gym.make("Pendulum-v1")
         else:
             self.env = utils.make_env(cfg)
-        
+
         cfg.agent.params.obs_dim = self.env.observation_space.shape[0]
         cfg.agent.params.action_dim = self.env.action_space.shape[0]
         cfg.agent.params.action_range = [
@@ -55,7 +59,7 @@ class Workspace(object):
             self.env.action_space.shape,
             int(cfg.replay_buffer_capacity),
             self.device)
-        
+
         # for logging
         self.total_feedback = 0
         self.labeled_feedback = 0
@@ -67,22 +71,22 @@ class Workspace(object):
             self.env.action_space.shape[0],
             ensemble_size=cfg.ensemble_size,
             size_segment=cfg.segment,
-            activation=cfg.activation, 
+            activation=cfg.activation,
             lr=cfg.reward_lr,
-            mb_size=cfg.reward_batch, 
-            large_batch=cfg.large_batch, 
-            label_margin=cfg.label_margin, 
-            teacher_beta=cfg.teacher_beta, 
-            teacher_gamma=cfg.teacher_gamma, 
-            teacher_eps_mistake=cfg.teacher_eps_mistake, 
-            teacher_eps_skip=cfg.teacher_eps_skip, 
+            mb_size=cfg.reward_batch,
+            large_batch=cfg.large_batch,
+            label_margin=cfg.label_margin,
+            teacher_beta=cfg.teacher_beta,
+            teacher_gamma=cfg.teacher_gamma,
+            teacher_eps_mistake=cfg.teacher_eps_mistake,
+            teacher_eps_skip=cfg.teacher_eps_skip,
             teacher_eps_equal=cfg.teacher_eps_equal)
-        
+
     def evaluate(self):
         average_episode_reward = 0
         average_true_episode_reward = 0
         success_rate = 0
-        
+
         for episode in range(self.cfg.num_eval_episodes):
             obs = self.env.reset()
             self.agent.reset()
@@ -96,12 +100,12 @@ class Workspace(object):
                 with utils.eval_mode(self.agent):
                     action = self.agent.act(obs, sample=False)
                 obs, reward, done, extra = self.env.step(action)
-                
+
                 episode_reward += reward
                 true_episode_reward += reward
                 if self.log_success:
                     episode_success = max(episode_success, extra['success'])
-                
+
             average_episode_reward += episode_reward
             average_true_episode_reward += true_episode_reward
             if self.log_success:
@@ -242,7 +246,7 @@ class Workspace(object):
                 self.learn_reward(first_flag=1)
                 
                 # relabel buffer
-                self.replay_buffer.relabel_with_predictor(self.reward_model)
+                self.replay_buffer.relabel_with_predictor(self.reward_model, rune=True)
                 
                 # reset Q due to unsuperivsed exploration
                 self.agent.reset_critic()
@@ -280,7 +284,7 @@ class Workspace(object):
                             self.reward_model.set_batch(self.cfg.max_feedback - self.total_feedback)
                             
                         self.learn_reward()
-                        self.replay_buffer.relabel_with_predictor(self.reward_model)
+                        self.replay_buffer.relabel_with_predictor(self.reward_model, rune=True)
                         interact_count = 0
                         
                 self.agent.update(self.replay_buffer, self.logger, self.step, 1)

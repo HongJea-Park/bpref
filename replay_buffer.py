@@ -67,7 +67,7 @@ class ReplayBuffer(object):
             np.copyto(self.not_dones_no_max[self.idx:next_index], done_no_max <= 0)
             self.idx = next_index
         
-    def relabel_with_predictor(self, predictor):
+    def relabel_with_predictor(self, predictor, rune=False):
         batch_size = 200
         total_iter = int(self.idx/batch_size)
         
@@ -83,7 +83,7 @@ class ReplayBuffer(object):
             actions = self.actions[index*batch_size:last_index]
             inputs = np.concatenate([obses, actions], axis=-1)
             
-            pred_reward = predictor.r_hat_batch(inputs)
+            pred_reward = predictor.r_hat_batch(inputs, rune=rune)
             self.rewards[index*batch_size:last_index] = pred_reward
             
     def sample(self, batch_size):
